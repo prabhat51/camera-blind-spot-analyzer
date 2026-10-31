@@ -1,3 +1,33 @@
+// Canvas tools; each has a toolbar button that turns into "Cancel" while active
+const TOOLS = {
+    camera: {
+        buttonId: 'placeCameraBtn',
+        label: '<i class="fas fa-plus"></i> Place Camera',
+        hint: 'Click on the plan to place a camera. Press Esc to cancel.'
+    },
+    obstacle: {
+        buttonId: 'placeObstacleBtn',
+        label: '<i class="fas fa-plus"></i> Place Obstacle',
+        hint: 'Click on the plan to place an obstacle. Press Esc to cancel.'
+    },
+    area: {
+        buttonId: 'drawAreaBtn',
+        label: '<i class="fas fa-draw-polygon"></i> Draw Area',
+        hint: 'Click to add the corners of the area to protect. Click the first point, double-click or press Enter to finish.'
+    },
+    scale: {
+        buttonId: 'setScaleBtn',
+        label: '<i class="fas fa-ruler"></i> Set Scale',
+        hint: 'Click two points a known distance apart, such as both ends of a wall.'
+    }
+};
+
+// Size of the sampling grid used for coverage analysis, in canvas pixels
+const CELL_SIZE = 10;
+
+// Coverage hues per camera; reds are left out so coverage never looks like a blind spot
+const COVERAGE_HUES = [170, 210, 120, 260, 40, 190, 290, 90];
+
 class CameraAnalyzer {
     constructor() {
         this.canvas = document.getElementById('canvas');
@@ -7,18 +37,23 @@ class CameraAnalyzer {
         this.selectedCamera = null;
         this.selectedObstacle = null;
         this.backgroundImage = null;
+        this.imageRect = null;
+        this.areaPolygon = null;
+        this.pixelsPerMeter = null;
         this.showCoverage = true;
         this.showBlindSpots = true;
         this.showRays = false;
-        this.isPlacingCamera = false;
-        this.isPlacingObstacle = false;
+        this.tool = null;
+        this.draftPoints = [];
+        this.pointer = null;
         this.currentMode = 'camera';
         this.scale = 1;
         this.cameraIdCounter = 1;
         this.obstacleIdCounter = 1;
+        this.analysis = { polygons: [], blindCells: [], totalCells: 0, coveredCells: 0 };
 
         this.initEventListeners();
-        this.draw();
+        this.refresh();
     }
 
     initEventListeners() {
@@ -27,9 +62,33 @@ class CameraAnalyzer {
             this.handleImageUpload(e);
         });
 
-        // Canvas click
+        // Canvas interaction
         this.canvas.addEventListener('click', (e) => {
             this.handleCanvasClick(e);
+        });
+
+        this.canvas.addEventListener('dblclick', () => {
+            if (this.tool === 'area') this.finishArea();
+        });
+
+        this.canvas.addEventListener('mousemove', (e) => {
+            if (this.tool === 'area' || this.tool === 'scale') {
+                this.pointer = this.getCanvasPoint(e);
+                this.draw();
+            }
+        });
+
+        this.canvas.addEventListener('mouseleave', () => {
+            this.pointer = null;
+            if (this.tool) this.draw();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.tool) {
+                this.setTool(null);
+            } else if (e.key === 'Enter' && this.tool === 'area') {
+                this.finishArea();
+            }
         });
 
         // Mode switching
@@ -41,13 +100,33 @@ class CameraAnalyzer {
             this.switchMode('obstacle');
         });
 
-        // Place buttons
+        // Tool buttons
         document.getElementById('placeCameraBtn').addEventListener('click', () => {
-            this.togglePlaceCamera();
+            this.toggleTool('camera');
         });
 
         document.getElementById('placeObstacleBtn').addEventListener('click', () => {
-            this.togglePlaceObstacle();
+            this.toggleTool('obstacle');
+        });
+
+        document.getElementById('drawAreaBtn').addEventListener('click', () => {
+            this.toggleTool('area');
+        });
+
+        document.getElementById('clearAreaBtn').addEventListener('click', () => {
+            this.clearArea();
+        });
+
+        document.getElementById('setScaleBtn').addEventListener('click', () => {
+            this.toggleTool('scale');
+        });
+
+        document.getElementById('applyScale').addEventListener('click', () => {
+            this.applyScale();
+        });
+
+        document.getElementById('scaleDistance').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this.applyScale();
         });
 
         // Toggle buttons
@@ -90,7 +169,7 @@ class CameraAnalyzer {
 
         document.getElementById('rangeSlider').addEventListener('input', (e) => {
             this.updateSelectedCamera({ range: parseInt(e.target.value) });
-            document.getElementById('rangeValue').textContent = e.target.value + 'px';
+            document.getElementById('rangeValue').textContent = this.formatLength(parseInt(e.target.value));
         });
 
         document.getElementById('xPosition').addEventListener('input', (e) => {
@@ -113,12 +192,12 @@ class CameraAnalyzer {
 
         document.getElementById('obstacleWidthSlider').addEventListener('input', (e) => {
             this.updateSelectedObstacle({ width: parseInt(e.target.value) });
-            document.getElementById('obstacleWidthValue').textContent = e.target.value + 'px';
+            document.getElementById('obstacleWidthValue').textContent = this.formatLength(parseInt(e.target.value));
         });
 
         document.getElementById('obstacleHeightSlider').addEventListener('input', (e) => {
             this.updateSelectedObstacle({ height: parseInt(e.target.value) });
-            document.getElementById('obstacleHeightValue').textContent = e.target.value + 'px';
+            document.getElementById('obstacleHeightValue').textContent = this.formatLength(parseInt(e.target.value));
         });
 
         document.getElementById('obstacleXPosition').addEventListener('input', (e) => {
@@ -142,10 +221,7 @@ class CameraAnalyzer {
         document.getElementById('placeCameraBtn').style.display = mode === 'camera' ? 'inline-flex' : 'none';
         document.getElementById('placeObstacleBtn').style.display = mode === 'obstacle' ? 'inline-flex' : 'none';
 
-        // Reset placement modes
-        this.isPlacingCamera = false;
-        this.isPlacingObstacle = false;
-        this.canvas.style.cursor = 'default';
+        this.setTool(null);
     }
 
     handleImageUpload(event) {
@@ -156,7 +232,8 @@ class CameraAnalyzer {
                 const img = new Image();
                 img.onload = () => {
                     this.backgroundImage = img;
-                    this.draw();
+                    this.imageRect = this.fitRect(img.width, img.height);
+                    this.refresh();
                 };
                 img.src = e.target.result;
             };
@@ -164,24 +241,55 @@ class CameraAnalyzer {
         }
     }
 
-    handleCanvasClick(event) {
-        const rect = this.canvas.getBoundingClientRect();
-        const x = (event.clientX - rect.left) / this.scale;
-        const y = (event.clientY - rect.top) / this.scale;
+    // Largest rectangle with the image's aspect ratio that fits the canvas, centred
+    fitRect(width, height) {
+        const ratio = Math.min(this.canvas.width / width, this.canvas.height / height);
+        const fitWidth = width * ratio;
+        const fitHeight = height * ratio;
+        return {
+            x: (this.canvas.width - fitWidth) / 2,
+            y: (this.canvas.height - fitHeight) / 2,
+            width: fitWidth,
+            height: fitHeight
+        };
+    }
 
-        if (this.isPlacingCamera) {
-            this.addCamera(x, y);
-            this.togglePlaceCamera();
-        } else if (this.isPlacingObstacle) {
-            this.addObstacle(x, y);
-            this.togglePlaceObstacle();
+    // Mouse position in canvas pixels, independent of zoom and border
+    getCanvasPoint(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        const ratio = this.canvas.width / this.canvas.clientWidth;
+        return {
+            x: (event.clientX - rect.left - this.canvas.clientLeft) * ratio,
+            y: (event.clientY - rect.top - this.canvas.clientTop) * ratio
+        };
+    }
+
+    handleCanvasClick(event) {
+        const { x, y } = this.getCanvasPoint(event);
+
+        switch (this.tool) {
+            case 'camera':
+                this.addCamera(x, y);
+                this.setTool(null);
+                break;
+            case 'obstacle':
+                this.addObstacle(x, y);
+                this.setTool(null);
+                break;
+            case 'area':
+                this.addAreaPoint(x, y);
+                break;
+            case 'scale':
+                this.addScalePoint(x, y);
+                break;
         }
     }
 
     addCamera(x, y) {
+        const id = this.cameraIdCounter++;
         const camera = {
-            id: this.cameraIdCounter++,
-            name: `Camera ${this.cameras.length + 1}`,
+            id: id,
+            name: `Camera ${id}`,
             x: x,
             y: y,
             angle: 0,
@@ -191,14 +299,14 @@ class CameraAnalyzer {
 
         this.cameras.push(camera);
         this.updateCameraList();
-        this.draw();
-        this.updateStats();
+        this.refresh();
     }
 
     addObstacle(x, y) {
+        const id = this.obstacleIdCounter++;
         const obstacle = {
-            id: this.obstacleIdCounter++,
-            name: `Obstacle ${this.obstacles.length + 1}`,
+            id: id,
+            name: `Obstacle ${id}`,
             x: x - 20,
             y: y - 20,
             width: 40,
@@ -207,36 +315,120 @@ class CameraAnalyzer {
 
         this.obstacles.push(obstacle);
         this.updateObstacleList();
+        this.refresh();
+    }
+
+    toggleTool(tool) {
+        this.setTool(this.tool === tool ? null : tool);
+    }
+
+    setTool(tool) {
+        this.tool = tool;
+        this.draftPoints = [];
+
+        for (const [name, { buttonId, label }] of Object.entries(TOOLS)) {
+            const btn = document.getElementById(buttonId);
+            const active = name === tool;
+            btn.classList.toggle('btn-active', active);
+            btn.innerHTML = active ? '<i class="fas fa-times"></i> Cancel' : label;
+        }
+
+        this.canvas.style.cursor = tool ? 'crosshair' : 'default';
+        document.getElementById('scaleForm').style.display = 'none';
+        this.setHint(tool ? TOOLS[tool].hint : '');
         this.draw();
+    }
+
+    setHint(text) {
+        document.getElementById('toolHint').style.display = text ? 'flex' : 'none';
+        document.getElementById('toolHintText').textContent = text;
+    }
+
+    addAreaPoint(x, y) {
+        const points = this.draftPoints;
+
+        // Clicking back on the first point closes the shape
+        if (points.length >= 3 && Geometry.distance(x, y, points[0][0], points[0][1]) < 10) {
+            this.finishArea();
+            return;
+        }
+
+        // Ignore the repeated click that comes with a double-click
+        const last = points[points.length - 1];
+        if (last && Geometry.distance(x, y, last[0], last[1]) < 3) return;
+
+        points.push([x, y]);
+        this.draw();
+    }
+
+    finishArea() {
+        if (this.draftPoints.length < 3) {
+            this.setHint('An area needs at least 3 corners. Keep clicking, or press Esc to cancel.');
+            return;
+        }
+
+        this.areaPolygon = this.draftPoints;
+        this.setTool(null);
+        this.updateAreaControls();
+        this.refresh();
+    }
+
+    clearArea() {
+        this.areaPolygon = null;
+        this.updateAreaControls();
+        this.refresh();
+    }
+
+    updateAreaControls() {
+        document.getElementById('clearAreaBtn').style.display = this.areaPolygon ? 'inline-flex' : 'none';
+    }
+
+    addScalePoint(x, y) {
+        if (this.draftPoints.length === 2) this.draftPoints = [];
+        this.draftPoints.push([x, y]);
+
+        const ready = this.draftPoints.length === 2;
+        document.getElementById('scaleForm').style.display = ready ? 'flex' : 'none';
+        this.setHint(ready ? 'Enter the real distance between the two points:' : TOOLS.scale.hint);
+        if (ready) document.getElementById('scaleDistance').focus();
+        this.draw();
+    }
+
+    applyScale() {
+        const meters = parseFloat(document.getElementById('scaleDistance').value);
+        if (this.draftPoints.length !== 2 || !(meters > 0)) return;
+
+        const [[x1, y1], [x2, y2]] = this.draftPoints;
+        const pixels = Geometry.distance(x1, y1, x2, y2);
+        if (pixels < 5) {
+            this.setHint('Those points are too close together. Click two points further apart.');
+            return;
+        }
+
+        this.pixelsPerMeter = pixels / meters;
+        this.setTool(null);
+        this.refreshUnits();
+    }
+
+    // Re-render everything that displays a length after the scale changes
+    refreshUnits() {
+        document.getElementById('scaleValue').textContent =
+            `Scale: 1 m = ${this.pixelsPerMeter.toFixed(1)} px`;
+        this.updateCameraList();
+        this.updateObstacleList();
+        if (this.selectedCamera) this.showCameraSettings();
+        if (this.selectedObstacle) this.showObstacleSettings();
         this.updateStats();
     }
 
-    togglePlaceCamera() {
-        this.isPlacingCamera = !this.isPlacingCamera;
-        const btn = document.getElementById('placeCameraBtn');
-        if (this.isPlacingCamera) {
-            btn.classList.add('btn-active');
-            btn.innerHTML = '<i class="fas fa-times"></i> Cancel';
-            this.canvas.style.cursor = 'crosshair';
-        } else {
-            btn.classList.remove('btn-active');
-            btn.innerHTML = '<i class="fas fa-plus"></i> Place Camera';
-            this.canvas.style.cursor = 'default';
-        }
+    formatLength(pixels) {
+        if (!this.pixelsPerMeter) return `${Math.round(pixels)}px`;
+        return `${(pixels / this.pixelsPerMeter).toFixed(1)} m`;
     }
 
-    togglePlaceObstacle() {
-        this.isPlacingObstacle = !this.isPlacingObstacle;
-        const btn = document.getElementById('placeObstacleBtn');
-        if (this.isPlacingObstacle) {
-            btn.classList.add('btn-active');
-            btn.innerHTML = '<i class="fas fa-times"></i> Cancel';
-            this.canvas.style.cursor = 'crosshair';
-        } else {
-            btn.classList.remove('btn-active');
-            btn.innerHTML = '<i class="fas fa-plus"></i> Place Obstacle';
-            this.canvas.style.cursor = 'default';
-        }
+    formatArea(squarePixels) {
+        if (!this.pixelsPerMeter) return '— (set scale)';
+        return `${(squarePixels / this.pixelsPerMeter ** 2).toFixed(1)} m²`;
     }
 
     toggleCoverage() {
@@ -261,203 +453,119 @@ class CameraAnalyzer {
     }
 
     setZoom(value) {
+        // Resize the element (not a CSS transform) so the wrapper scrolls when zoomed in
         this.scale = value;
-        this.canvas.style.transform = `scale(${this.scale})`;
-        this.canvas.style.transformOrigin = 'top left';
+        this.canvas.style.width = `${this.canvas.width * value}px`;
+        this.canvas.style.height = `${this.canvas.height * value}px`;
         document.getElementById('zoomValue').textContent = Math.round(value * 100) + '%';
     }
 
-    // Line intersection with obstacles
-    lineIntersectsObstacle(x1, y1, x2, y2) {
-        for (let obstacle of this.obstacles) {
-            if (this.lineIntersectsRect(x1, y1, x2, y2, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
-                // Return intersection point
-                const intersection = this.getLineRectIntersection(x1, y1, x2, y2, obstacle.x, obstacle.y, obstacle.width, obstacle.height);
-                if (intersection) {
-                    return intersection;
+    // The region coverage is measured over: a drawn area, else the floor plan, else the canvas
+    getAnalysisArea() {
+        if (this.areaPolygon) {
+            return { label: 'Custom area', polygon: this.areaPolygon };
+        }
+        if (this.imageRect) {
+            return { label: 'Floor plan', polygon: Geometry.rectCorners(this.imageRect) };
+        }
+        return {
+            label: 'Whole canvas',
+            polygon: Geometry.rectCorners({ x: 0, y: 0, width: this.canvas.width, height: this.canvas.height })
+        };
+    }
+
+    // Sample the analysis area on a grid; the same result drives the overlay and the stats
+    analyze() {
+        const polygons = this.cameras.map(camera => Geometry.visibilityPolygon(camera, this.obstacles));
+        const area = this.getAnalysisArea().polygon;
+        const blindCells = [];
+        let totalCells = 0;
+        let coveredCells = 0;
+
+        for (let x = 0; x < this.canvas.width; x += CELL_SIZE) {
+            for (let y = 0; y < this.canvas.height; y += CELL_SIZE) {
+                const cx = x + CELL_SIZE / 2;
+                const cy = y + CELL_SIZE / 2;
+
+                // Only open floor inside the area counts; obstacles are solid
+                if (!Geometry.pointInPolygon(cx, cy, area)) continue;
+                if (this.obstacles.some(obstacle => Geometry.pointInRect(cx, cy, obstacle))) continue;
+
+                totalCells++;
+                if (this.cameras.some((camera, i) => Geometry.cameraSees(camera, polygons[i], cx, cy))) {
+                    coveredCells++;
+                } else {
+                    blindCells.push([x, y]);
                 }
             }
         }
-        return null;
+
+        this.analysis = { polygons, blindCells, totalCells, coveredCells };
     }
 
-    lineIntersectsRect(x1, y1, x2, y2, rx, ry, rw, rh) {
-        // Check if line intersects with rectangle
-        return this.lineIntersectsLine(x1, y1, x2, y2, rx, ry, rx + rw, ry) ||
-            this.lineIntersectsLine(x1, y1, x2, y2, rx + rw, ry, rx + rw, ry + rh) ||
-            this.lineIntersectsLine(x1, y1, x2, y2, rx + rw, ry + rh, rx, ry + rh) ||
-            this.lineIntersectsLine(x1, y1, x2, y2, rx, ry + rh, rx, ry);
-    }
-
-    lineIntersectsLine(x1, y1, x2, y2, x3, y3, x4, y4) {
-        const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-        if (denom === 0) return false;
-
-        const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
-        const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
-
-        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
-    }
-
-    getLineRectIntersection(x1, y1, x2, y2, rx, ry, rw, rh) {
-        const intersections = [];
-
-        // Check each edge of rectangle
-        const edges = [
-            [rx, ry, rx + rw, ry],           // top
-            [rx + rw, ry, rx + rw, ry + rh], // right
-            [rx + rw, ry + rh, rx, ry + rh], // bottom
-            [rx, ry + rh, rx, ry]            // left
-        ];
-
-        for (let edge of edges) {
-            const intersection = this.getLineIntersection(x1, y1, x2, y2, edge[0], edge[1], edge[2], edge[3]);
-            if (intersection) {
-                intersections.push(intersection);
-            }
-        }
-
-        if (intersections.length > 0) {
-            // Return closest intersection to starting point
-            intersections.sort((a, b) => {
-                const distA = Math.sqrt((a.x - x1) ** 2 + (a.y - y1) ** 2);
-                const distB = Math.sqrt((b.x - x1) ** 2 + (b.y - y1) ** 2);
-                return distA - distB;
-            });
-            return intersections[0];
-        }
-        return null;
-    }
-
-    getLineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
-        const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-        if (denom === 0) return null;
-
-        const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
-        const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
-
-        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-            return {
-                x: x1 + t * (x2 - x1),
-                y: y1 + t * (y2 - y1)
-            };
-        }
-        return null;
-    }
-
-    getCoveragePoints(camera) {
-        const { x, y, angle, fov, range } = camera;
-        const points = [];
-        const startAngle = (angle - fov / 2) * Math.PI / 180;
-        const endAngle = (angle + fov / 2) * Math.PI / 180;
-
-        points.push([x, y]);
-
-        // Cast rays with obstacle detection
-        for (let i = 0; i <= 40; i++) {
-            const currentAngle = startAngle + (endAngle - startAngle) * (i / 40);
-            const endX = x + Math.cos(currentAngle) * range;
-            const endY = y + Math.sin(currentAngle) * range;
-
-            // Check for obstacle intersection
-            const intersection = this.lineIntersectsObstacle(x, y, endX, endY);
-            if (intersection) {
-                points.push([intersection.x, intersection.y]);
-            } else {
-                points.push([endX, endY]);
-            }
-        }
-
-        return points;
-    }
-
-    isPointCovered(px, py) {
-        return this.cameras.some(camera => {
-            const { x, y, angle, fov, range } = camera;
-            const distance = Math.sqrt((px - x) ** 2 + (py - y) ** 2);
-            if (distance > range) return false;
-
-            // Check if point is within field of view
-            const angleToPoint = Math.atan2(py - y, px - x) * 180 / Math.PI;
-            let angleDiff = Math.abs(angleToPoint - angle);
-            if (angleDiff > 180) angleDiff = 360 - angleDiff;
-            if (angleDiff > fov / 2) return false;
-
-            // Check if line of sight is blocked by obstacles
-            const intersection = this.lineIntersectsObstacle(x, y, px, py);
-            return !intersection; // Point is covered if no intersection found
-        });
+    // Recompute coverage and redraw; use after anything that changes the scene
+    refresh() {
+        this.analyze();
+        this.draw();
+        this.updateStats();
     }
 
     updateCameraList() {
-        const container = document.getElementById('cameras');
-        container.innerHTML = '';
-
-        this.cameras.forEach(camera => {
-            const div = document.createElement('div');
-            div.className = 'camera-item';
-            if (this.selectedCamera === camera.id) {
-                div.classList.add('selected');
-            }
-
-            div.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <div style="font-weight: bold; color: #333;">${camera.name}</div>
-                        <div style="font-size: 12px; color: #666;">
-                            Position: (${Math.round(camera.x)}, ${Math.round(camera.y)})
-                        </div>
-                        <div style="font-size: 12px; color: #666;">
-                            Range: ${camera.range}px | FOV: ${camera.fov}°
-                        </div>
-                    </div>
-                    <button onclick="analyzer.deleteCamera(${camera.id})" class="btn btn-danger" style="padding: 8px 10px; margin: 0; font-size: 12px;">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            `;
-
-            div.addEventListener('click', (e) => {
-                if (!e.target.closest('button')) {
-                    this.selectCamera(camera.id);
-                }
-            });
-
-            container.appendChild(div);
-        });
+        this.renderList('cameras', 'camera-item', this.cameras, this.selectedCamera,
+            camera => [
+                `Position: (${Math.round(camera.x)}, ${Math.round(camera.y)})`,
+                `Range: ${this.formatLength(camera.range)} | FOV: ${camera.fov}°`
+            ],
+            id => this.selectCamera(id),
+            id => this.deleteCamera(id));
     }
 
     updateObstacleList() {
-        const container = document.getElementById('obstacles');
+        this.renderList('obstacles', 'obstacle-item', this.obstacles, this.selectedObstacle,
+            obstacle => [
+                `Position: (${Math.round(obstacle.x)}, ${Math.round(obstacle.y)})`,
+                `Size: ${this.formatLength(obstacle.width)} × ${this.formatLength(obstacle.height)}`
+            ],
+            id => this.selectObstacle(id),
+            id => this.deleteObstacle(id));
+    }
+
+    // Builds list items with textContent so user-entered names are never parsed as HTML
+    renderList(containerId, className, items, selectedId, describe, onSelect, onDelete) {
+        const container = document.getElementById(containerId);
         container.innerHTML = '';
 
-        this.obstacles.forEach(obstacle => {
+        items.forEach(item => {
             const div = document.createElement('div');
-            div.className = 'obstacle-item';
-            if (this.selectedObstacle === obstacle.id) {
-                div.classList.add('selected');
-            }
+            div.className = className;
+            div.classList.toggle('selected', item.id === selectedId);
 
-            div.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <div style="font-weight: bold; color: #333;">${obstacle.name}</div>
-                        <div style="font-size: 12px; color: #666;">
-                            Position: (${Math.round(obstacle.x)}, ${Math.round(obstacle.y)})
-                        </div>
-                        <div style="font-size: 12px; color: #666;">
-                            Size: ${obstacle.width}×${obstacle.height}px
-                        </div>
-                    </div>
-                    <button onclick="analyzer.deleteObstacle(${obstacle.id})" class="btn btn-danger" style="padding: 8px 10px; margin: 0; font-size: 12px;">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            `;
+            const info = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'item-title';
+            title.textContent = item.name;
+            info.appendChild(title);
+
+            describe(item).forEach(line => {
+                const detail = document.createElement('div');
+                detail.className = 'item-detail';
+                detail.textContent = line;
+                info.appendChild(detail);
+            });
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-danger btn-icon';
+            deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
+            deleteBtn.addEventListener('click', () => onDelete(item.id));
+
+            const row = document.createElement('div');
+            row.className = 'item-row';
+            row.append(info, deleteBtn);
+            div.appendChild(row);
 
             div.addEventListener('click', (e) => {
                 if (!e.target.closest('button')) {
-                    this.selectObstacle(obstacle.id);
+                    onSelect(item.id);
                 }
             });
 
@@ -496,7 +604,7 @@ class CameraAnalyzer {
         document.getElementById('fovSlider').value = camera.fov;
         document.getElementById('fovValue').textContent = camera.fov + '°';
         document.getElementById('rangeSlider').value = camera.range;
-        document.getElementById('rangeValue').textContent = camera.range + 'px';
+        document.getElementById('rangeValue').textContent = this.formatLength(camera.range);
         document.getElementById('xPosition').value = Math.round(camera.x);
         document.getElementById('yPosition').value = Math.round(camera.y);
     }
@@ -510,9 +618,9 @@ class CameraAnalyzer {
 
         document.getElementById('obstacleName').value = obstacle.name;
         document.getElementById('obstacleWidthSlider').value = obstacle.width;
-        document.getElementById('obstacleWidthValue').textContent = obstacle.width + 'px';
+        document.getElementById('obstacleWidthValue').textContent = this.formatLength(obstacle.width);
         document.getElementById('obstacleHeightSlider').value = obstacle.height;
-        document.getElementById('obstacleHeightValue').textContent = obstacle.height + 'px';
+        document.getElementById('obstacleHeightValue').textContent = this.formatLength(obstacle.height);
         document.getElementById('obstacleXPosition').value = Math.round(obstacle.x);
         document.getElementById('obstacleYPosition').value = Math.round(obstacle.y);
     }
@@ -524,8 +632,7 @@ class CameraAnalyzer {
         if (camera) {
             Object.assign(camera, updates);
             this.updateCameraList();
-            this.draw();
-            this.updateStats();
+            this.refresh();
         }
     }
 
@@ -536,8 +643,7 @@ class CameraAnalyzer {
         if (obstacle) {
             Object.assign(obstacle, updates);
             this.updateObstacleList();
-            this.draw();
-            this.updateStats();
+            this.refresh();
         }
     }
 
@@ -548,8 +654,7 @@ class CameraAnalyzer {
             document.getElementById('cameraSettings').style.display = 'none';
         }
         this.updateCameraList();
-        this.draw();
-        this.updateStats();
+        this.refresh();
     }
 
     deleteObstacle(id) {
@@ -559,8 +664,7 @@ class CameraAnalyzer {
             document.getElementById('obstacleSettings').style.display = 'none';
         }
         this.updateObstacleList();
-        this.draw();
-        this.updateStats();
+        this.refresh();
     }
 
     deleteSelectedCamera() {
@@ -576,24 +680,14 @@ class CameraAnalyzer {
     }
 
     updateStats() {
+        const { totalCells, coveredCells } = this.analysis;
+
         document.getElementById('totalCameras').textContent = this.cameras.length;
         document.getElementById('totalObstacles').textContent = this.obstacles.length;
+        document.getElementById('analysisRegion').textContent = this.getAnalysisArea().label;
+        document.getElementById('analyzedArea').textContent = this.formatArea(totalCells * CELL_SIZE ** 2);
 
-        // Calculate coverage percentage
-        const gridSize = 15;
-        let totalPoints = 0;
-        let coveredPoints = 0;
-
-        for (let x = 0; x < this.canvas.width; x += gridSize) {
-            for (let y = 0; y < this.canvas.height; y += gridSize) {
-                totalPoints++;
-                if (this.isPointCovered(x, y)) {
-                    coveredPoints++;
-                }
-            }
-        }
-
-        const coveragePercent = totalPoints > 0 ? Math.round((coveredPoints / totalPoints) * 100) : 0;
+        const coveragePercent = totalCells > 0 ? Math.round((coveredCells / totalCells) * 100) : 0;
         const blindSpotPercent = 100 - coveragePercent;
 
         document.getElementById('coveragePercent').textContent = coveragePercent + '%';
@@ -609,14 +703,21 @@ class CameraAnalyzer {
         document.getElementById('securityRating').textContent = rating;
     }
 
+    // Render from the cached analysis; cheap enough to call on every mouse move
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
         // Draw background image
         if (this.backgroundImage) {
+            const { x, y, width, height } = this.imageRect;
             this.ctx.globalAlpha = 0.7;
-            this.ctx.drawImage(this.backgroundImage, 0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.drawImage(this.backgroundImage, x, y, width, height);
             this.ctx.globalAlpha = 1.0;
+        }
+
+        // Shade everything outside a drawn analysis area
+        if (this.areaPolygon) {
+            this.drawAnalysisArea();
         }
 
         // Draw blind spots first (lowest layer)
@@ -637,32 +738,52 @@ class CameraAnalyzer {
         // Draw obstacles
         this.drawObstacles();
 
-        // Draw cameras (top layer)
+        // Draw cameras
         this.drawCameras();
+
+        // Draw in-progress area or scale line (top layer)
+        this.drawToolPreview();
+    }
+
+    tracePolygon(points) {
+        this.ctx.moveTo(points[0][0], points[0][1]);
+        points.slice(1).forEach(([x, y]) => this.ctx.lineTo(x, y));
+        this.ctx.closePath();
+    }
+
+    drawAnalysisArea() {
+        const ctx = this.ctx;
+        ctx.save();
+
+        ctx.beginPath();
+        ctx.rect(0, 0, this.canvas.width, this.canvas.height);
+        this.tracePolygon(this.areaPolygon);
+        ctx.fillStyle = 'rgba(30, 30, 60, 0.25)';
+        ctx.fill('evenodd');
+
+        ctx.beginPath();
+        this.tracePolygon(this.areaPolygon);
+        ctx.setLineDash([8, 6]);
+        ctx.strokeStyle = '#4c51bf';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.restore();
     }
 
     drawBlindSpots() {
         this.ctx.fillStyle = 'rgba(255, 65, 108, 0.5)';
-        const gridSize = 10;
-        for (let x = 0; x < this.canvas.width; x += gridSize) {
-            for (let y = 0; y < this.canvas.height; y += gridSize) {
-                if (!this.isPointCovered(x, y)) {
-                    this.ctx.fillRect(x, y, gridSize, gridSize);
-                }
-            }
+        for (const [x, y] of this.analysis.blindCells) {
+            this.ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
         }
     }
 
     drawCameraCoverage() {
-        this.cameras.forEach((camera, index) => {
-            const points = this.getCoveragePoints(camera);
-
+        this.analysis.polygons.forEach((points, index) => {
             this.ctx.beginPath();
-            this.ctx.moveTo(points[0][0], points[0][1]);
-            points.forEach(([x, y]) => this.ctx.lineTo(x, y));
-            this.ctx.closePath();
+            this.tracePolygon(points);
 
-            const hue = (index * 60) % 360;
+            const hue = COVERAGE_HUES[index % COVERAGE_HUES.length];
             this.ctx.fillStyle = `hsla(${hue}, 60%, 50%, 0.25)`;
             this.ctx.fill();
             this.ctx.strokeStyle = `hsl(${hue}, 60%, 40%)`;
@@ -672,24 +793,16 @@ class CameraAnalyzer {
     }
 
     drawLightRays() {
-        this.cameras.forEach((camera, index) => {
+        this.cameras.forEach(camera => {
             const { x, y, angle, fov, range } = camera;
-            const startAngle = (angle - fov / 2) * Math.PI / 180;
-            const endAngle = (angle + fov / 2) * Math.PI / 180;
+            const startAngle = angle - fov / 2;
 
             // Draw multiple rays
             for (let i = 0; i <= 20; i++) {
-                const currentAngle = startAngle + (endAngle - startAngle) * (i / 20);
-                const endX = x + Math.cos(currentAngle) * range;
-                const endY = y + Math.sin(currentAngle) * range;
-
-                // Check for obstacle intersection
-                const intersection = this.lineIntersectsObstacle(x, y, endX, endY);
-                const finalX = intersection ? intersection.x : endX;
-                const finalY = intersection ? intersection.y : endY;
+                const hit = Geometry.castRay(x, y, startAngle + fov * (i / 20), range, this.obstacles);
 
                 // Draw ray with gradient
-                const gradient = this.ctx.createLinearGradient(x, y, finalX, finalY);
+                const gradient = this.ctx.createLinearGradient(x, y, hit.x, hit.y);
                 gradient.addColorStop(0, 'rgba(255, 215, 0, 0.8)');
                 gradient.addColorStop(1, 'rgba(255, 165, 0, 0.2)');
 
@@ -697,7 +810,7 @@ class CameraAnalyzer {
                 this.ctx.lineWidth = 1;
                 this.ctx.beginPath();
                 this.ctx.moveTo(x, y);
-                this.ctx.lineTo(finalX, finalY);
+                this.ctx.lineTo(hit.x, hit.y);
                 this.ctx.stroke();
             }
         });
@@ -759,8 +872,8 @@ class CameraAnalyzer {
             this.ctx.lineWidth = 4;
             this.ctx.beginPath();
             this.ctx.moveTo(x, y);
-            const dirX = x + Math.cos(angle * Math.PI / 180) * 30;
-            const dirY = y + Math.sin(angle * Math.PI / 180) * 30;
+            const dirX = x + Math.cos(Geometry.toRadians(angle)) * 30;
+            const dirY = y + Math.sin(Geometry.toRadians(angle)) * 30;
             this.ctx.lineTo(dirX, dirY);
             this.ctx.stroke();
 
@@ -782,6 +895,47 @@ class CameraAnalyzer {
             this.ctx.textAlign = 'center';
             this.ctx.fillText(camera.name, x, y - 25);
         });
+    }
+
+    drawToolPreview() {
+        if (this.tool !== 'area' && this.tool !== 'scale') return;
+
+        // Rubber-band line to the cursor until the shape is complete
+        const complete = this.tool === 'scale' && this.draftPoints.length === 2;
+        const points = this.pointer && !complete
+            ? [...this.draftPoints, [this.pointer.x, this.pointer.y]]
+            : this.draftPoints;
+        if (points.length === 0) return;
+
+        const ctx = this.ctx;
+        const color = this.tool === 'area' ? '#4c51bf' : '#d97706';
+        ctx.save();
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(points[0][0], points[0][1]);
+        points.slice(1).forEach(([x, y]) => ctx.lineTo(x, y));
+        ctx.stroke();
+
+        // Larger first point shows where to click to close the area
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        this.draftPoints.forEach(([x, y], i) => {
+            ctx.beginPath();
+            ctx.arc(x, y, i === 0 && this.tool === 'area' ? 7 : 4, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+
+        if (this.tool === 'scale' && points.length === 2) {
+            const [[x1, y1], [x2, y2]] = points;
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${Math.round(Geometry.distance(x1, y1, x2, y2))} px`, (x1 + x2) / 2, (y1 + y2) / 2 - 8);
+        }
+
+        ctx.restore();
     }
 }
 

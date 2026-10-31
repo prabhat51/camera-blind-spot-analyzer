@@ -10,57 +10,76 @@
 <body>
     <div class="main-container">
         <div class="canvas-container">
-            <canvas id="canvas" class="canvas" width="900" height="700"></canvas>
-
-            <div class="controls">
-                <div style="margin-bottom: 20px;">
+            <div class="toolbar">
+                <div class="toolbar-group">
                     <input type="file" id="imageUpload" class="file-input" accept="image/*">
                     <label for="imageUpload" class="file-label">
                         <i class="fas fa-upload"></i>
-                        Load CAD DIAGRAM
+                        Load Floor Plan
                     </label>
+                    <button id="setScaleBtn" class="btn btn-secondary">
+                        <i class="fas fa-ruler"></i> Set Scale
+                    </button>
+                    <span id="scaleValue" class="scale-value">Scale: not set</span>
                 </div>
 
-                <div class="mode-selector">
-                    <button id="cameraModeBtn" class="mode-btn active">
-                        <i class="fas fa-video"></i> Camera
+                <div class="toolbar-group">
+                    <button id="drawAreaBtn" class="btn btn-primary">
+                        <i class="fas fa-draw-polygon"></i> Draw Area
                     </button>
-                    <button id="obstacleModeBtn" class="mode-btn">
-                        <i class="fas fa-cube"></i> Obstacle
+                    <button id="clearAreaBtn" class="btn btn-danger" style="display: none;">
+                        <i class="fas fa-eraser"></i> Clear Area
                     </button>
                 </div>
 
-                <div style="margin-bottom: 20px;">
+                <div class="toolbar-group">
+                    <div class="mode-selector">
+                        <button id="cameraModeBtn" class="mode-btn active">
+                            <i class="fas fa-video"></i> Camera
+                        </button>
+                        <button id="obstacleModeBtn" class="mode-btn">
+                            <i class="fas fa-cube"></i> Obstacle
+                        </button>
+                    </div>
                     <button id="placeCameraBtn" class="btn btn-success">
-                        <i class="fas fa-plus"></i>
-                        Place Camera
+                        <i class="fas fa-plus"></i> Place Camera
                     </button>
                     <button id="placeObstacleBtn" class="btn btn-warning" style="display: none;">
-                        <i class="fas fa-plus"></i>
-                        Place Obstacle
+                        <i class="fas fa-plus"></i> Place Obstacle
                     </button>
                 </div>
 
-                <div style="margin-bottom: 20px;">
+                <div class="toolbar-group">
                     <button id="toggleCoverage" class="btn btn-primary btn-active">
-                        <i class="fas fa-eye"></i>
-                        Coverage
+                        <i class="fas fa-eye"></i> Coverage
                     </button>
                     <button id="toggleBlindSpots" class="btn btn-danger btn-active">
-                        <i class="fas fa-eye-slash"></i>
-                        Blind Spots
+                        <i class="fas fa-eye-slash"></i> Blind Spots
                     </button>
                     <button id="toggleRays" class="btn btn-secondary">
-                        <i class="fas fa-lightbulb"></i>
-                        Light Rays
+                        <i class="fas fa-lightbulb"></i> Light Rays
                     </button>
                 </div>
 
-                <div class="form-group">
-                    <label>Zoom Level:</label>
-                    <input type="range" id="zoomSlider" min="0.5" max="3" step="0.1" value="1" class="form-control">
+                <div class="toolbar-group zoom-control">
+                    <label for="zoomSlider">Zoom</label>
+                    <input type="range" id="zoomSlider" min="0.5" max="3" step="0.1" value="1">
                     <span id="zoomValue">100%</span>
                 </div>
+            </div>
+
+            <div id="toolHint" class="tool-hint" style="display: none;">
+                <i class="fas fa-info-circle"></i>
+                <span id="toolHintText"></span>
+                <div id="scaleForm" class="scale-form" style="display: none;">
+                    <input type="number" id="scaleDistance" class="form-control" min="0.1" step="0.1" placeholder="e.g. 5">
+                    <span>metres</span>
+                    <button id="applyScale" class="btn btn-success">Apply</button>
+                </div>
+            </div>
+
+            <div class="canvas-wrapper">
+                <canvas id="canvas" class="canvas" width="900" height="700"></canvas>
             </div>
         </div>
 
@@ -159,6 +178,8 @@
                 <div class="section-title">Coverage Analytics</div>
                 <div><strong>Total Cameras:</strong> <span id="totalCameras">0</span></div>
                 <div><strong>Total Obstacles:</strong> <span id="totalObstacles">0</span></div>
+                <div><strong>Analysis Region:</strong> <span id="analysisRegion">Whole canvas</span></div>
+                <div><strong>Analyzed Area:</strong> <span id="analyzedArea">—</span></div>
                 <div><strong>Area Coverage:</strong> <span id="coveragePercent">0%</span></div>
                 <div><strong>Blind Spot Area:</strong> <span id="blindSpotPercent">0%</span></div>
                 <div><strong>Security Rating:</strong> <span id="securityRating">Poor</span></div>
@@ -186,10 +207,15 @@
                     <div class="legend-color" style="background: linear-gradient(90deg, #FFD700, #FFA500);"></div>
                     <span>Light Rays</span>
                 </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: transparent; border: 2px dashed #4c51bf;"></div>
+                    <span>Analysis Area</span>
+                </div>
             </div>
         </div>
     </div>
 
+    <script src="js/geometry.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

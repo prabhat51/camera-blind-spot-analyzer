@@ -22,29 +22,105 @@ body {
 
 .canvas-container {
     flex: 1;
-    position: relative;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     padding: 20px;
 }
 
+/* Scrolls when the canvas is zoomed beyond the available space */
+.canvas-wrapper {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border-radius: 15px;
+}
+
 .canvas {
+    display: block;
+    box-sizing: content-box;
     border: 3px solid rgba(255,255,255,0.3);
     background: white;
-    cursor: crosshair;
+    cursor: default;
     box-shadow: 0 20px 40px rgba(0,0,0,0.2);
     border-radius: 15px;
 }
 
-.controls {
-    position: absolute;
-    top: 30px;
-    left: 30px;
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 18px;
     background: rgba(255,255,255,0.95);
     backdrop-filter: blur(10px);
-    padding: 25px;
-    border-radius: 20px;
+    padding: 12px 16px;
+    border-radius: 16px;
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-    min-width: 280px;
-    border: 1px solid rgba(255,255,255,0.3);
+}
+
+.toolbar-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.toolbar .btn,
+.toolbar .file-label {
+    margin: 0;
+    padding: 9px 14px;
+    font-size: 12px;
+}
+
+.toolbar .mode-selector {
+    margin: 0;
+    padding: 4px;
+}
+
+.toolbar .mode-btn {
+    padding: 8px 12px;
+}
+
+.scale-value,
+.zoom-control label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #555;
+}
+
+.zoom-control input {
+    width: 110px;
+}
+
+.tool-hint {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: #fffbea;
+    border: 1px solid #f6d365;
+    border-radius: 12px;
+    color: #5c4400;
+    font-size: 14px;
+}
+
+.scale-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.scale-form .form-control {
+    width: 100px;
+    padding: 6px 10px;
+}
+
+.scale-form .btn {
+    margin: 0;
+    padding: 7px 14px;
+    font-size: 12px;
 }
 
 .sidebar {
@@ -128,6 +204,28 @@ body {
     border-color: #667eea;
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
     box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+}
+
+.item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.item-title {
+    font-weight: bold;
+    color: #333;
+}
+
+.item-detail {
+    font-size: 12px;
+    color: #666;
+}
+
+.btn-icon {
+    padding: 8px 10px;
+    margin: 0;
+    font-size: 12px;
 }
 
 .form-group {
