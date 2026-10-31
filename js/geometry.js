@@ -1,8 +1,13 @@
 // Pure geometry helpers shared by the analyzer (browser) and its tests (Node).
 // Angles are in degrees, measured clockwise from +x because canvas y points down.
+// Anything that blocks sight (walls, obstacle edges) is a segment [x1, y1, x2, y2].
 const Geometry = {
-    // Offset for the extra rays cast either side of obstacle corners
+    // Offset for the extra rays cast either side of segment endpoints
     EPSILON_DEG: 0.01,
+
+    // Hits closer than this to the camera are ignored, so a camera mounted
+    // exactly on a wall still sees out instead of being blocked by it
+    MIN_HIT_DISTANCE: 0.5,
 
     toRadians(degrees) {
         return degrees * Math.PI / 180;
@@ -42,6 +47,14 @@ const Geometry = {
         return px >= x && px <= x + width && py >= y && py <= y + height;
     },
 
+    distanceToSegment(px, py, [x1, y1, x2, y2]) {
+        const lengthSq = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+        if (lengthSq === 0) return this.distance(px, py, x1, y1);
+
+        const t = Math.max(0, Math.min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / lengthSq));
+        return this.distance(px, py, x1 + t * (x2 - x1), y1 + t * (y2 - y1));
+    },
+
     pointInPolygon(px, py, polygon) {
         let inside = false;
         for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -54,26 +67,25 @@ const Geometry = {
         return inside;
     },
 
-    // Point where a ray from (x, y) stops: the nearest obstacle edge, or its full range
-    castRay(x, y, angleDeg, range, obstacles) {
+    // Point where a ray from (x, y) stops: the nearest blocking segment, or its full range
+    castRay(x, y, angleDeg, range, segments) {
         const rad = this.toRadians(angleDeg);
         const endX = x + Math.cos(rad) * range;
         const endY = y + Math.sin(rad) * range;
+        const minT = this.MIN_HIT_DISTANCE / range;
 
         let nearest = { x: endX, y: endY, t: 1 };
-        for (const obstacle of obstacles) {
-            for (const [ax, ay, bx, by] of this.rectEdges(obstacle)) {
-                const hit = this.segmentIntersection(x, y, endX, endY, ax, ay, bx, by);
-                if (hit && hit.t < nearest.t) nearest = hit;
-            }
+        for (const [ax, ay, bx, by] of segments) {
+            const hit = this.segmentIntersection(x, y, endX, endY, ax, ay, bx, by);
+            if (hit && hit.t >= minT && hit.t < nearest.t) nearest = hit;
         }
         return nearest;
     },
 
     // Area a camera can see, as a polygon fanning out from the camera position.
-    // Besides evenly spaced rays, rays are cast just either side of every obstacle
-    // corner so shadow edges are exact instead of approximated.
-    visibilityPolygon(camera, obstacles, stepDeg = 1) {
+    // Besides evenly spaced rays, rays are cast just either side of every segment
+    // endpoint so shadow edges are exact instead of approximated.
+    visibilityPolygon(camera, segments, stepDeg = 1) {
         const { x, y, angle, fov, range } = camera;
         const start = angle - fov / 2;
 
@@ -83,8 +95,8 @@ const Geometry = {
             offsets.push(fov * i / steps);
         }
 
-        for (const obstacle of obstacles) {
-            for (const [cx, cy] of this.rectCorners(obstacle)) {
+        for (const [x1, y1, x2, y2] of segments) {
+            for (const [cx, cy] of [[x1, y1], [x2, y2]]) {
                 const cornerAngle = Math.atan2(cy - y, cx - x) * 180 / Math.PI;
                 const offset = ((cornerAngle - start) % 360 + 360) % 360;
                 if (offset > fov) continue;
@@ -99,7 +111,7 @@ const Geometry = {
 
         const polygon = [[x, y]];
         for (const offset of offsets) {
-            const hit = this.castRay(x, y, start + offset, range, obstacles);
+            const hit = this.castRay(x, y, start + offset, range, segments);
             polygon.push([hit.x, hit.y]);
         }
         return polygon;

@@ -12,8 +12,27 @@
         <div class="canvas-container">
             <div class="toolbar">
                 <div class="toolbar-group">
-                    <input type="file" id="imageUpload" class="file-input" accept="image/*">
-                    <label for="imageUpload" class="file-label">
+                    <button id="newProjectBtn" class="btn btn-secondary" title="Start a new project">
+                        <i class="fas fa-file"></i> New
+                    </button>
+                    <input type="file" id="projectUpload" class="file-input" accept=".json,application/json">
+                    <label for="projectUpload" class="file-label" title="Open a saved project file">
+                        <i class="fas fa-folder-open"></i> Open
+                    </label>
+                    <button id="saveProjectBtn" class="btn btn-secondary" title="Download the project as a file (Ctrl+S)">
+                        <i class="fas fa-floppy-disk"></i> Save
+                    </button>
+                    <button id="undoBtn" class="btn btn-secondary" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
+                        <i class="fas fa-rotate-left"></i>
+                    </button>
+                    <button id="redoBtn" class="btn btn-secondary" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>
+                        <i class="fas fa-rotate-right"></i>
+                    </button>
+                </div>
+
+                <div class="toolbar-group">
+                    <input type="file" id="imageUpload" class="file-input" accept="image/*,application/pdf">
+                    <label for="imageUpload" class="file-label" title="Image or PDF floor plan">
                         <i class="fas fa-upload"></i>
                         Load Floor Plan
                     </label>
@@ -40,12 +59,18 @@
                         <button id="obstacleModeBtn" class="mode-btn">
                             <i class="fas fa-cube"></i> Obstacle
                         </button>
+                        <button id="wallModeBtn" class="mode-btn">
+                            <i class="fas fa-grip-lines"></i> Wall
+                        </button>
                     </div>
                     <button id="placeCameraBtn" class="btn btn-success">
                         <i class="fas fa-plus"></i> Place Camera
                     </button>
                     <button id="placeObstacleBtn" class="btn btn-warning" style="display: none;">
                         <i class="fas fa-plus"></i> Place Obstacle
+                    </button>
+                    <button id="drawWallBtn" class="btn btn-primary" style="display: none;">
+                        <i class="fas fa-pen"></i> Draw Walls
                     </button>
                 </div>
 
@@ -81,6 +106,8 @@
             <div class="canvas-wrapper">
                 <canvas id="canvas" class="canvas" width="900" height="700"></canvas>
             </div>
+
+            <div id="toast" class="toast" role="status" aria-live="polite"></div>
         </div>
 
         <div class="sidebar">
@@ -150,12 +177,12 @@
 
                 <div class="form-group">
                     <label>Width: <span id="obstacleWidthValue">40px</span></label>
-                    <input type="range" id="obstacleWidthSlider" min="20" max="200" value="40" class="form-control">
+                    <input type="range" id="obstacleWidthSlider" min="20" max="400" value="40" class="form-control">
                 </div>
 
                 <div class="form-group">
                     <label>Height: <span id="obstacleHeightValue">40px</span></label>
-                    <input type="range" id="obstacleHeightSlider" min="20" max="200" value="40" class="form-control">
+                    <input type="range" id="obstacleHeightSlider" min="20" max="400" value="40" class="form-control">
                 </div>
 
                 <div class="form-group">
@@ -174,10 +201,24 @@
                 </button>
             </div>
 
+            <div id="wallSettings" style="display: none;">
+                <div class="section-title">Wall Settings</div>
+                <div class="form-group">
+                    <label>Length: <span id="wallLength"></span></label>
+                    <div class="item-detail">Drag the wall to move it, or drag its ends to reshape it. Hold Shift for 45° angles.</div>
+                </div>
+
+                <button id="deleteWall" class="btn btn-danger">
+                    <i class="fas fa-trash"></i>
+                    Delete Wall
+                </button>
+            </div>
+
             <div class="stats">
                 <div class="section-title">Coverage Analytics</div>
                 <div><strong>Total Cameras:</strong> <span id="totalCameras">0</span></div>
                 <div><strong>Total Obstacles:</strong> <span id="totalObstacles">0</span></div>
+                <div><strong>Total Walls:</strong> <span id="totalWalls">0</span></div>
                 <div><strong>Analysis Region:</strong> <span id="analysisRegion">Whole canvas</span></div>
                 <div><strong>Analyzed Area:</strong> <span id="analyzedArea">—</span></div>
                 <div><strong>Area Coverage:</strong> <span id="coveragePercent">0%</span></div>
@@ -202,6 +243,10 @@
                 <div class="legend-item">
                     <div class="legend-color" style="background: #8B4513;"></div>
                     <span>Obstacles</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #2d3748;"></div>
+                    <span>Walls</span>
                 </div>
                 <div class="legend-item">
                     <div class="legend-color" style="background: linear-gradient(90deg, #FFD700, #FFA500);"></div>

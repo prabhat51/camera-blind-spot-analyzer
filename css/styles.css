@@ -106,6 +106,29 @@ body {
     font-size: 14px;
 }
 
+.toast {
+    position: fixed;
+    left: 30px;
+    bottom: 30px;
+    max-width: 420px;
+    padding: 12px 18px;
+    background: #2d3748;
+    color: white;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    font-size: 14px;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.toast.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
 .scale-form {
     display: flex;
     align-items: center;
@@ -177,6 +200,13 @@ body {
 .btn-secondary {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
+}
+
+.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 
 .btn-active {
